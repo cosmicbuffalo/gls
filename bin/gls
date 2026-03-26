@@ -1,0 +1,120 @@
+#!/usr/bin/env zsh
+setopt null_glob
+
+_gls_has_nested_changes() {
+  local search_dir="$1" repo_dir
+  local -a counts
+  while IFS= read -r repo_dir; do
+    repo_dir="${repo_dir%/.git}"
+    [[ -n "$(git -C "$repo_dir" status --porcelain --ignore-submodules=dirty 2>/dev/null)" ]] && return 0
+    if git -C "$repo_dir" rev-parse --abbrev-ref "@{upstream}" >/dev/null 2>&1; then
+      counts=(${(s: :)$(git -C "$repo_dir" rev-list --left-right --count HEAD...@{upstream} 2>/dev/null)})
+      (( ${counts[1]:-0} > 0 || ${counts[2]:-0} > 0 )) && return 0
+    fi
+  done < <(find "$search_dir" -mindepth 2 -name .git -type d -prune 2>/dev/null)
+  return 1
+}
+
+main() {
+  local dir="${1:-.}"
+  local -a entries
+  entries=("$dir"/.*(N/) "$dir"/*(N/))
+
+  local c_reset='' c_branch='' c_ahead='' c_behind='' c_dirty='' c_dim=''
+  if [[ -t 1 ]]; then
+    c_reset=$'\033[0m'
+    c_branch=$'\033[36m'
+    c_ahead=$'\033[91m'
+    c_behind=$'\033[94m'
+    c_dirty=$'\033[33m'
+    c_dim=$'\033[90m'
+  fi
+
+  local entry name label repo_root entry_root branch dirty ahead behind annotation display_len has_upstream
+  local -a counts
+  local max_repo_label_len=0
+  local -a labels annotations display_lens
+
+  for entry in "${entries[@]}"; do
+    name="${entry:t}"
+    [[ "$name" == "." || "$name" == ".." ]] && continue
+
+    annotation=''
+    display_len=$(( ${#name} + 1 ))
+
+    repo_root=$(git -C "$entry" rev-parse --show-toplevel 2>/dev/null) || {
+      if _gls_has_nested_changes "$entry"; then
+        label="${c_dirty}${name}/${c_reset}"
+        annotation="${c_dirty}<nested changes>${c_reset}"
+        (( display_len > max_repo_label_len )) && max_repo_label_len=$display_len
+      else
+        label="${c_dim}${name}/${c_reset}"
+      fi
+      labels+=("$label")
+      annotations+=("$annotation")
+      display_lens+=("$display_len")
+      continue
+    }
+
+    label="${name}/"
+
+    entry_root=$(cd "$entry" 2>/dev/null && pwd -P) || {
+      labels+=("$label")
+      annotations+=("$annotation")
+      display_lens+=("$display_len")
+      continue
+    }
+
+    if [[ "$repo_root" == "$entry_root" ]]; then
+      branch=$(git -C "$entry" symbolic-ref --quiet --short HEAD 2>/dev/null || git -C "$entry" rev-parse --short HEAD 2>/dev/null)
+
+      dirty=''
+      [[ -n "$(git -C "$entry" status --porcelain --ignore-submodules=dirty 2>/dev/null)" ]] && dirty=" ${c_dirty}*${c_reset}"
+
+      has_upstream=0
+      ahead=0
+      behind=0
+      if git -C "$entry" rev-parse --abbrev-ref "@{upstream}" >/dev/null 2>&1; then
+        has_upstream=1
+        counts=(${(s: :)$(git -C "$entry" rev-list --left-right --count HEAD...@{upstream} 2>/dev/null)})
+        ahead=${counts[1]:-0}
+        behind=${counts[2]:-0}
+      fi
+
+      if (( has_upstream )); then
+        annotation="${c_branch}${branch}${c_reset}"
+      else
+        annotation="${c_dirty}${branch}${c_reset}"
+      fi
+      (( ahead > 0 )) && annotation+=" ${c_ahead}↑${ahead}${c_reset}"
+      (( behind > 0 )) && annotation+=" ${c_behind}↓${behind}${c_reset}"
+      annotation+="${dirty}"
+
+      if [[ -n "$dirty" ]] || (( ahead > 0 )); then
+        label="${c_dirty}${name}/${c_reset}"
+      fi
+
+      if _gls_has_nested_changes "$entry"; then
+        annotation+=" ${c_dirty}<nested changes>${c_reset}"
+      fi
+
+      (( display_len > max_repo_label_len )) && max_repo_label_len=$display_len
+    fi
+
+    labels+=("$label")
+    annotations+=("$annotation")
+    display_lens+=("$display_len")
+  done
+
+  local i pad
+  for (( i = 1; i <= ${#labels}; i++ )); do
+    if [[ -n "${annotations[i]}" ]]; then
+      pad=$(( max_repo_label_len - display_lens[i] ))
+      printf '%s%*s  [%s]\n' "${labels[i]}" "$pad" "" "${annotations[i]}"
+    else
+      printf '%s\n' "${labels[i]}"
+    fi
+  done
+}
+
+main "$@"
