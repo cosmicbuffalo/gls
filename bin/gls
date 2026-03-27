@@ -11,7 +11,7 @@ _gls_has_nested_changes() {
       counts=(${(s: :)$(git -C "$repo_dir" rev-list --left-right --count HEAD...@{upstream} 2>/dev/null)})
       (( ${counts[1]:-0} > 0 || ${counts[2]:-0} > 0 )) && return 0
     fi
-  done < <(find "$search_dir" -mindepth 2 -name .git -type d -prune 2>/dev/null)
+  done < <(find "$search_dir" -mindepth 2 -maxdepth 4 -name .git -type d -prune 2>/dev/null)
   return 1
 }
 
@@ -43,13 +43,21 @@ main() {
     display_len=$(( ${#name} + 1 ))
 
     repo_root=$(git -C "$entry" rev-parse --show-toplevel 2>/dev/null) || {
-      if _gls_has_nested_changes "$entry"; then
-        label="${c_dirty}${name}/${c_reset}"
-        annotation="${c_dirty}<nested changes>${c_reset}"
-        (( display_len > max_repo_label_len )) && max_repo_label_len=$display_len
-      else
-        label="${c_dim}${name}/${c_reset}"
-      fi
+      # Skip nested check for dirs unlikely to contain git repos
+      case "$name" in
+        .aws|.cache|.cargo|.docker|.ecr|.gem|.gnupg|.gradle|.java|.kube|.m2|.npm|.pip|.rustup|.ssh|.vnc|.wakatime|.ansible|.ansible_async|.mcp-auth|.packer.d|.virtualenvs|.bazel|.bun|.bundle)
+          label="${c_dim}${name}/${c_reset}"
+          ;;
+        *)
+          if _gls_has_nested_changes "$entry"; then
+            label="${c_dirty}${name}/${c_reset}"
+            annotation="${c_dirty}<nested changes>${c_reset}"
+            (( display_len > max_repo_label_len )) && max_repo_label_len=$display_len
+          else
+            label="${c_dim}${name}/${c_reset}"
+          fi
+          ;;
+      esac
       labels+=("$label")
       annotations+=("$annotation")
       display_lens+=("$display_len")
@@ -110,6 +118,7 @@ main() {
   for (( i = 1; i <= ${#labels}; i++ )); do
     if [[ -n "${annotations[i]}" ]]; then
       pad=$(( max_repo_label_len - display_lens[i] ))
+      (( pad < 0 )) && pad=0
       printf '%s%*s  [%s]\n' "${labels[i]}" "$pad" "" "${annotations[i]}"
     else
       printf '%s\n' "${labels[i]}"
