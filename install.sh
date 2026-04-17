@@ -32,7 +32,7 @@ if ! echo "$PATH" | tr ':' '\n' | grep -qx "$INSTALL_DIR"; then
 fi
 
 # Clear any shell functions that shadow the installed script
-if [[ -n "$ZSH_VERSION" ]]; then
+if [[ -n "${ZSH_VERSION:-}" ]]; then
   unfunction gls _gls_has_nested_changes _gls_print_line 2>/dev/null
   true
 fi
